@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: 2021, microG Project Team
 # SPDX-License-Identifier: CC0-1.0
 
-name: Build
+name: Build and Sign APK
 on: workflow_dispatch
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -10,7 +11,54 @@ jobs:
       - uses: actions/checkout@v2
         with:
           fetch-depth: 0
-      - run: ./gradlew --no-daemon build
+      
+      - name: Set up JDK
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+      
+      - name: Generate signing key and configure Gradle
+        run: |
+          # Generate keystore
+          keytool -genkey -v \
+            -keystore keystore.jks \
+            -alias app \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass password123 \
+            -keypass password123 \
+            -dname "CN=GitHub Build, OU=Actions, O=GitHub, L=San Francisco, ST=California, C=US"
+          
+          # Create or update gradle.properties with signing config
+          echo "RELEASE_STORE_FILE=keystore.jks" >> gradle.properties
+          echo "RELEASE_STORE_PASSWORD=password123" >> gradle.properties
+          echo "RELEASE_KEY_ALIAS=app" >> gradle.properties
+          echo "RELEASE_KEY_PASSWORD=password123" >> gradle.properties
+      
+      - name: Build with Gradle
+        run: ./gradlew --no-daemon assembleRelease
         env:
           TERM: dumb
           JAVA_OPTS: -Xmx2048m
+      
+      - name: Find and list APK files
+        id: find_apk
+        run: |
+          echo "Looking for APK files..."
+          find . -name "*.apk" -type f | while read file; do
+            echo "Found APK: $file"
+            ls -la "$file"
+          done
+          APK_FILES=$(find . -name "*.apk" -type f)
+          echo "APK_FILES=$APK_FILES" >> $GITHUB_ENV
+      
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: signed-apks
+          path: |
+            **/*.apk
+            !**/test-*.apk
+          retention-days: 30
